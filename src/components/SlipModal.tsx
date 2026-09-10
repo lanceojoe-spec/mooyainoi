@@ -1,7 +1,7 @@
-import { useState, useRef, ChangeEvent } from 'react';
+import { useState, useRef, useEffect, ChangeEvent } from 'react';
 import {
   X,
-  HardDrive,
+  Cloud,
   Upload,
   Link2,
   ExternalLink,
@@ -11,20 +11,23 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { SlipEditTarget } from '../types';
-import { getDriveDirectImageUrl, uploadSlipToDrive } from '../services/googleDriveService';
+import { getDriveDirectImageUrl } from '../services/googleDriveService';
 import { formatCurrency } from '../utils/formatters';
+import {
+  uploadSlipImage,
+  checkStorageStatus,
+  StorageStatus,
+} from '../services/storageUploadService';
 
 interface SlipModalProps {
   target: SlipEditTarget | null;
-  accessToken: string | null;
   onClose: () => void;
-  onSaveSlip: (type: SlipEditTarget['type'], id: string, newSlipUrl: string, rowIndex?: number) => Promise<void>;
-  onDeleteRecord?: (type: SlipEditTarget['type'], id: string, rowIndex?: number) => Promise<void>;
+  onSaveSlip: (type: SlipEditTarget['type'], id: string, newSlipUrl: string) => Promise<void> | void;
+  onDeleteRecord?: (type: SlipEditTarget['type'], id: string) => Promise<void> | void;
 }
 
 export const SlipModal = ({
   target,
-  accessToken,
   onClose,
   onSaveSlip,
   onDeleteRecord,
@@ -33,26 +36,26 @@ export const SlipModal = ({
 
   const [inputUrl, setInputUrl] = useState(target.currentSlipUrl || '');
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [confirmUpdate, setConfirmUpdate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const directImageUrl = getDriveDirectImageUrl(inputUrl || target.currentSlipUrl);
 
+  useEffect(() => {
+    checkStorageStatus().then((status) => {
+      setStorageStatus(status);
+    });
+  }, []);
+
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    if (!accessToken) {
-      setError('กรุณาเชื่อมต่อ Google Sheets ที่แถบด้านบนก่อนอัปโหลดไฟล์สลิป');
-      return;
-    }
 
     // Check size limit: 15MB
     if (file.size > 15 * 1024 * 1024) {
@@ -61,38 +64,40 @@ export const SlipModal = ({
     }
 
     setIsUploading(true);
-    setUploadProgress(10);
     setError(null);
     setSuccessMsg(null);
 
     try {
-      const uploaded = await uploadSlipToDrive(file, accessToken, (p) => setUploadProgress(p));
-      setInputUrl(uploaded.webViewLink);
-      setSuccessMsg('อัปโหลดไฟล์ไปยัง Google Drive สำเร็จแล้ว! อย่าลืมกดบันทึกลงชีต');
+      const result = await uploadSlipImage(file, target.type);
+      if (result.success && result.url) {
+        setInputUrl(result.url);
+        const providerName =
+          result.provider === 'vercel-blob'
+            ? 'Vercel Blob Storage'
+            : result.provider === 'supabase'
+            ? 'Supabase Storage'
+            : 'รูปภาพในระบบ';
+        setSuccessMsg(`อัปโหลดรูปภาพสลิปไปยัง ${providerName} สำเร็จแล้ว กด "บันทึกการแก้ไขสลิป" เพื่อเสร็จสิ้น`);
+      } else {
+        throw new Error(result.error || 'อัปโหลดสลิปไม่สำเร็จ');
+      }
     } catch (err: any) {
-      console.error('Upload to Drive failed:', err);
-      setError(err?.message || 'เกิดข้อผิดพลาดในการอัปโหลดไปยัง Google Drive');
+      setError(err?.message || 'เกิดข้อผิดพลาดในการอัปโหลดไฟล์รูปภาพ');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  const handleTriggerSave = () => {
-    // Show confirmation modal before modifying workspace data (MANDATORY per Workspace guidelines)
-    setConfirmUpdate(true);
-  };
-
   const executeSave = async () => {
-    setConfirmUpdate(false);
     setIsSaving(true);
     setError(null);
     try {
-      await onSaveSlip(target.type, target.id, inputUrl.trim(), target.rowIndex);
+      await onSaveSlip(target.type, target.id, inputUrl.trim());
       setSuccessMsg('บันทึกข้อมูลสลิปเรียบร้อยแล้ว');
       setTimeout(() => {
         onClose();
-      }, 700);
+      }, 600);
     } catch (err: any) {
       setError(err?.message || 'ไม่สามารถบันทึกข้อมูลได้');
     } finally {
@@ -106,7 +111,7 @@ export const SlipModal = ({
     setIsDeleting(true);
     setError(null);
     try {
-      await onDeleteRecord(target.type, target.id, target.rowIndex);
+      await onDeleteRecord(target.type, target.id);
       onClose();
     } catch (err: any) {
       setError(err?.message || 'ไม่สามารถลบรายการได้');
@@ -130,13 +135,25 @@ export const SlipModal = ({
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center">
-              <HardDrive className="w-4 h-4" />
+            <div className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center">
+              <Cloud className="w-4 h-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-slate-800 leading-tight">
-                หลักฐานและสลิปการจ่ายเงิน (Google Drive)
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-slate-800 leading-tight">
+                  หลักฐานและสลิปการจ่ายเงิน
+                </h2>
+                {storageStatus?.activeProvider === 'vercel-blob' && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Vercel Blob
+                  </span>
+                )}
+                {storageStatus?.activeProvider === 'supabase' && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    Supabase
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-slate-500">
                 {target.title} • {formatCurrency(target.amount)}
               </p>
@@ -152,7 +169,7 @@ export const SlipModal = ({
         </div>
 
         {/* Modal Body */}
-        <div className="p-5 overflow-y-auto space-y-5">
+        <div className="p-5 overflow-y-auto space-y-4">
           {/* Status Messages */}
           {error && (
             <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs flex items-start gap-2">
@@ -181,51 +198,54 @@ export const SlipModal = ({
                   alt="หลักฐานการชำระเงิน"
                   className="max-h-[320px] w-auto max-w-full object-contain p-2 rounded-lg"
                   onError={(e) => {
-                    // Hide broken image placeholder if Drive requires webView
                     (e.target as HTMLElement).style.display = 'none';
                   }}
                 />
-                <div className="absolute bottom-2 right-2 flex items-center gap-2">
-                  <a
-                    href={inputUrl || target.currentSlipUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900/80 hover:bg-slate-900 text-white rounded-lg text-xs font-medium backdrop-blur-xs transition-colors shadow-sm"
-                  >
-                    <span>เปิดดูใน Google Drive</span>
-                    <ExternalLink className="w-3.5 h-3.5" />
-                  </a>
-                </div>
+                {inputUrl.startsWith('http') && (
+                  <div className="absolute bottom-2 right-2 flex items-center gap-2">
+                    <a
+                      href={inputUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-900/80 hover:bg-slate-900 text-white rounded-lg text-xs font-medium backdrop-blur-xs transition-colors shadow-sm"
+                    >
+                      <span>เปิดลิงก์รูปภาพ</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="border-2 border-dashed border-slate-200 rounded-xl p-6 text-center bg-slate-50/50 flex flex-col items-center justify-center">
                 <ImageIcon className="w-10 h-10 text-slate-300 mb-2" />
                 <p className="text-xs text-slate-500">ยังไม่มีสลิปหรือหลักฐานแนบ</p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  สามารถอัปโหลดไฟล์รูปภาพ หรือวางลิงก์ Google Drive ได้ด้านล่าง
+                  สามารถเลือกไฟล์รูปภาพจากเครื่อง หรือวางลิงก์รูปภาพ / Google Drive ได้ด้านล่าง
                 </p>
               </div>
             )}
           </div>
 
-          {/* Upload directly to Google Drive */}
-          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-4 space-y-3">
+          {/* Upload file from device */}
+          <div className="bg-rose-50/50 border border-rose-100 rounded-xl p-3.5 space-y-2.5">
             <div className="flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-blue-950 flex items-center gap-1.5">
-                  <Upload className="w-3.5 h-3.5 text-blue-600" />
-                  อัปโหลดสลิปขึ้น Google Drive ทันที
-                </span>
-                <p className="text-[11px] text-blue-800/80 mt-0.5">
-                  ระบบจะบันทึกไฟล์ลงโฟลเดอร์ &quot;ร้านหมู_สลิปและหลักฐาน&quot; ในไดรฟ์ของคุณ
-                </p>
-              </div>
+              <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Upload className="w-3.5 h-3.5 text-rose-600" />
+                อัปโหลดรูปภาพสลิปหลักฐาน
+              </span>
+              <span className="text-[11px] text-slate-500">
+                {storageStatus?.activeProvider === 'vercel-blob'
+                  ? '☁️ Vercel Blob'
+                  : storageStatus?.activeProvider === 'supabase'
+                  ? '☁️ Supabase Storage'
+                  : 'โหมดสำรอง'}
+              </span>
             </div>
 
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*,.pdf"
+              accept="image/*"
               onChange={handleFileUpload}
               className="hidden"
             />
@@ -235,17 +255,17 @@ export const SlipModal = ({
               id="upload-slip-file-btn"
               disabled={isUploading || isSaving}
               onClick={() => fileInputRef.current?.click()}
-              className="w-full py-2.5 px-3 rounded-lg border border-blue-200 bg-white hover:bg-blue-50/80 text-blue-700 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60"
+              className="w-full py-2.5 px-3 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60 shadow-2xs"
             >
               {isUploading ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
-                  <span>กำลังอัปโหลดไปยัง Google Drive ({uploadProgress}%)...</span>
+                  <div className="w-4 h-4 border-2 border-rose-600 border-t-transparent rounded-full animate-spin" />
+                  <span>กำลังอัปโหลดสลิปขึ้น Cloud Storage...</span>
                 </>
               ) : (
                 <>
-                  <Upload className="w-4 h-4 text-blue-600" />
-                  <span>เลือกไฟล์รูปภาพสลิปจากอุปกรณ์</span>
+                  <Upload className="w-4 h-4 text-rose-600" />
+                  <span>เลือกรูปภาพสลิปใหม่ (รองรับ Vercel Blob / Supabase)</span>
                 </>
               )}
             </button>
@@ -255,58 +275,27 @@ export const SlipModal = ({
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
               <Link2 className="w-3.5 h-3.5 text-slate-500" />
-              <span>หรือระบุลิงก์ Google Drive โดยตรง</span>
+              <span>หรือระบุลิงก์รูปภาพ / ลิงก์ Google Drive</span>
             </label>
             <input
               id="slip-url-input"
-              type="url"
-              placeholder="https://drive.google.com/file/d/..."
+              type="text"
+              placeholder="https://drive.google.com/file/d/... หรือ URL รูปภาพ"
               value={inputUrl}
               onChange={(e) => setInputUrl(e.target.value)}
               className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-rose-500 focus:border-rose-500 bg-white"
             />
           </div>
 
-          {/* Confirmation Modals (Mandatory for Workspace mutations) */}
-          {confirmUpdate && (
-            <div className="p-4 bg-amber-50 border border-amber-300 rounded-xl space-y-3">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                <div className="text-xs text-amber-900">
-                  <div className="font-bold">ยืนยันการอัปเดตข้อมูลสลิปลง Google Sheets?</div>
-                  <p className="mt-0.5 text-slate-600">
-                    ข้อมูลลิงก์สลิปหลักฐานจะถูกบันทึกลงในสเปรดชีต Google Sheets ที่แถวรายการนี้
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setConfirmUpdate(false)}
-                  className="px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-200/60 rounded-lg cursor-pointer font-medium"
-                >
-                  ยกเลิก
-                </button>
-                <button
-                  type="button"
-                  id="confirm-update-slip-btn"
-                  onClick={executeSave}
-                  className="px-3 py-1.5 text-xs text-white bg-blue-600 hover:bg-blue-700 rounded-lg cursor-pointer font-semibold"
-                >
-                  ยืนยันบันทึก
-                </button>
-              </div>
-            </div>
-          )}
-
+          {/* Delete Confirmation Modal */}
           {confirmDelete && (
             <div className="p-4 bg-red-50 border border-red-300 rounded-xl space-y-3">
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
                 <div className="text-xs text-red-900">
-                  <div className="font-bold">ยืนยันการลบรายการนี้ออกจาก Google Sheets?</div>
+                  <div className="font-bold">ยืนยันการลบรายการนี้?</div>
                   <p className="mt-0.5 text-slate-600">
-                    รายการ {target.title} ยอดเงิน {formatCurrency(target.amount)} จะถูกลบถาวร
+                    รายการ {target.title} ยอดเงิน {formatCurrency(target.amount)} จะถูกลบออกจากระบบ
                   </p>
                 </div>
               </div>
@@ -361,7 +350,7 @@ export const SlipModal = ({
               type="button"
               id="save-slip-btn"
               disabled={isSaving || isUploading || isDeleting}
-              onClick={handleTriggerSave}
+              onClick={executeSave}
               className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700 active:bg-rose-800 rounded-xl transition-colors cursor-pointer shadow-xs disabled:opacity-50 flex items-center gap-1.5"
             >
               {isSaving ? 'กำลังบันทึก...' : 'บันทึกการแก้ไขสลิป'}

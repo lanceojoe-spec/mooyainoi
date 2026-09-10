@@ -171,10 +171,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin, error: propError 
           <div className="p-3 bg-emerald-50/80 border border-emerald-200/80 rounded-xl text-[11px] text-emerald-800 space-y-1">
             <div className="font-semibold flex items-center gap-1.5 text-emerald-950">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-              <span>ความปลอดภัยและการจัดเก็บข้อมูล</span>
+              <span>ความปลอดภัยของระบบร้าน</span>
             </div>
             <p className="text-slate-600 leading-relaxed">
-              ข้อมูลทั้งหมดจะถูกจัดเก็บเข้า <strong>Google Sheets ของ lanceojoe@gmail.com</strong> โดยอัตโนมัติ
+              ระบบบันทึกข้อมูลและคำนวณยอดเงินคงเหลือปลอดภัย เข้าใช้งานด้วยชื่อผู้ใช้และรหัสผ่านร้านได้ทันที
             </p>
           </div>
 

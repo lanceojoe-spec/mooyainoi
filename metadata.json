@@ -1,6 +1,6 @@
 {
   "name": "ระบบจัดการร้านขายหมู",
-  "description": "ระบบบันทึกรายจ่ายสั่งซื้อหมู ค่ายิงแอด รายจ่ายอื่นๆ และรายรับ พร้อมรายงานสรุปและบันทึกลง Google Sheets",
+  "description": "ระบบบันทึกรายจ่ายสั่งซื้อหมู ค่ายิงแอด รายจ่ายอื่นๆ และรายรับ พร้อมอัปโหลดสลิปหลักฐานผ่าน Vercel Blob / Supabase คำนวณกำไรสุทธิและส่งออกข้อมูล",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
