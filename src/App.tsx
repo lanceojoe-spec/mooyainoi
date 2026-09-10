@@ -16,6 +16,8 @@ import {
   getCachedSpreadsheetMetadata,
   getCachedSheetsData,
   setCachedSheetsData,
+  connectCustomSpreadsheet,
+  shareSpreadsheetWithTeam,
 } from './services/googleSheetsService';
 import {
   ActiveTab,
@@ -26,6 +28,7 @@ import {
   SlipEditTarget,
   GoogleSheetInfo,
 } from './types';
+import { isAuthorizedEmail, AUTHORIZED_EMAILS, PRIMARY_OWNER_EMAIL } from './utils/authWhitelist';
 import { Navbar } from './components/Navbar';
 import { NavigationTabs } from './components/NavigationTabs';
 import { LoginView } from './components/LoginView';
@@ -35,6 +38,7 @@ import { OtherExpensesView } from './components/OtherExpensesView';
 import { IncomeView } from './components/IncomeView';
 import { ReportsView } from './components/ReportsView';
 import { SlipModal } from './components/SlipModal';
+import { SheetSettingsModal } from './components/SheetSettingsModal';
 import { CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
 export default function App() {
@@ -56,6 +60,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('pork');
   const [isDataLoading, setIsDataLoading] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [slipModalTarget, setSlipModalTarget] = useState<SlipEditTarget | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -68,6 +73,11 @@ export default function App() {
 
   // Refs to eliminate infinite re-render loops and race conditions
   const isFetchingRef = useRef(false);
+  const userRef = useRef<User | null>(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   const sheetMetadataRef = useRef<SheetMetadata | null>(sheetMetadata);
   useEffect(() => {
     sheetMetadataRef.current = sheetMetadata;
@@ -91,14 +101,15 @@ export default function App() {
   }, [porkPurchases, adExpenses, otherExpenses, incomeRecords]);
 
   // Unified sync data with Google Sheets
-  const syncData = useCallback(async (token: string, force = false) => {
+  const syncData = useCallback(async (token: string, force = false, overrideEmail?: string) => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
     try {
       setIsDataLoading(true);
       let meta = sheetMetadataRef.current;
       if (!meta || !meta.id) {
-        meta = await getOrCreateSpreadsheet(token);
+        const email = overrideEmail || userRef.current?.email || undefined;
+        meta = await getOrCreateSpreadsheet(token, email);
         setSheetMetadata(meta);
         sheetMetadataRef.current = meta;
       }
@@ -123,11 +134,21 @@ export default function App() {
   useEffect(() => {
     const unsubscribe = initAuth(
       async (authedUser, token) => {
+        if (!isAuthorizedEmail(authedUser.email)) {
+          await logout();
+          setUser(null);
+          setToken(null);
+          setAccessToken(null);
+          setAuthError(`อีเมล "${authedUser.email}" ไม่ได้รับอนุญาตให้เข้าใช้งานระบบ อนุญาตเฉพาะ: ${AUTHORIZED_EMAILS.join(', ')}`);
+          setIsAuthLoading(false);
+          return;
+        }
+
         setUser(authedUser);
         setToken(token);
         setAccessToken(token);
         setIsAuthLoading(false);
-        syncData(token, false);
+        syncData(token, false, authedUser.email || undefined);
       },
       () => {
         setUser(null);
@@ -146,11 +167,20 @@ export default function App() {
     try {
       const res = await googleSignIn();
       if (res) {
+        if (!isAuthorizedEmail(res.user.email)) {
+          await logout();
+          setUser(null);
+          setToken(null);
+          setAccessToken(null);
+          setAuthError(`อีเมล "${res.user.email}" ไม่ได้รับอนุญาตให้เข้าใช้งานระบบ อนุญาตเฉพาะ: ${AUTHORIZED_EMAILS.join(', ')}`);
+          return;
+        }
+
         setUser(res.user);
         setToken(res.accessToken);
         setAccessToken(res.accessToken);
         showToast(`ยินดีต้อนรับ ${res.user.displayName || res.user.email}`);
-        await syncData(res.accessToken, false);
+        await syncData(res.accessToken, false, res.user.email || undefined);
       }
     } catch (err: any) {
       console.error('Login error:', err);
@@ -177,6 +207,24 @@ export default function App() {
     setIsRefreshing(true);
     await syncData(accessToken, true);
     showToast('ซิงค์ข้อมูลล่าสุดจาก Google Sheets สำเร็จ');
+  };
+
+  // Connect custom spreadsheet URL or ID
+  const handleConnectCustomSheet = async (urlOrId: string) => {
+    if (!accessToken) throw new Error('กรุณาเข้าสู่ระบบก่อน');
+    const newMeta = await connectCustomSpreadsheet(urlOrId, accessToken);
+    setSheetMetadata(newMeta);
+    sheetMetadataRef.current = newMeta;
+    await syncData(accessToken, true);
+    showToast('เชื่อมต่อ Google Sheets หลักสำเร็จเรียบร้อย');
+  };
+
+  // Share spreadsheet with team
+  const handleShareWithTeam = async () => {
+    if (!accessToken || !sheetMetadata?.id) {
+      throw new Error('ไม่พบข้อมูล Google Sheets เพื่อแชร์สิทธิ์');
+    }
+    return await shareSpreadsheetWithTeam(sheetMetadata.id, accessToken);
   };
 
   // 1. Add Pork Purchase
@@ -467,6 +515,7 @@ export default function App() {
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         onLogout={handleLogout}
+        onOpenSettings={() => setIsSettingsOpen(true)}
       />
 
       {/* Main Container */}
@@ -552,6 +601,16 @@ export default function App() {
         onClose={() => setSlipModalTarget(null)}
         onSaveSlip={handleSaveSlip}
         onDeleteRecord={handleDeleteRecord}
+      />
+
+      {/* Sheet & Team Settings Modal */}
+      <SheetSettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        metadata={sheetMetadata}
+        currentUserEmail={user.email || ''}
+        onConnectCustomSheet={handleConnectCustomSheet}
+        onShareWithTeam={handleShareWithTeam}
       />
 
       {/* Toast Notification */}

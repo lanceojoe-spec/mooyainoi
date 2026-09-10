@@ -1,4 +1,5 @@
 import { PorkPurchase, AdExpense, OtherExpense, IncomeRecord } from '../types';
+import { PRIMARY_OWNER_EMAIL, AUTHORIZED_EMAILS, isPrimaryOwner } from '../utils/authWhitelist';
 
 const SHEETS_API_URL = 'https://sheets.googleapis.com/v4/spreadsheets';
 const DRIVE_API_URL = 'https://www.googleapis.com/drive/v3';
@@ -13,6 +14,7 @@ export interface SheetMetadata {
   name: string;
   url: string;
   sheetIds: Record<string, number>; // title -> sheetId
+  ownerEmail?: string;
 }
 
 export interface CachedAllData {
@@ -184,12 +186,179 @@ async function fetchWithRetry(
 }
 
 /**
- * Find or create the master pork store spreadsheet in Google Sheets
+ * Automatically share the master spreadsheet with all authorized team members
  */
-export async function getOrCreateSpreadsheet(accessToken: string): Promise<SheetMetadata> {
-  // 1. Check local cached metadata first to avoid unnecessary API reads
+export async function shareSpreadsheetWithTeam(
+  fileId: string,
+  accessToken: string
+): Promise<{ success: boolean; sharedEmails: string[]; failedEmails: string[] }> {
+  // Only share with team members other than the primary owner
+  const teamEmails = AUTHORIZED_EMAILS.filter((e) => e.toLowerCase() !== PRIMARY_OWNER_EMAIL.toLowerCase());
+  const sharedEmails: string[] = [];
+  const failedEmails: string[] = [];
+
+  for (const email of teamEmails) {
+    try {
+      const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions?sendNotificationEmail=false`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          role: 'writer',
+          type: 'user',
+          emailAddress: email,
+        }),
+      });
+
+      if (res.ok) {
+        sharedEmails.push(email);
+      } else {
+        // If already shared or permission exists, it might return 400/409, which is fine
+        const errJson = await res.json().catch(() => ({}));
+        if (errJson?.error?.message?.includes('already')) {
+          sharedEmails.push(email);
+        } else {
+          failedEmails.push(email);
+        }
+      }
+    } catch {
+      failedEmails.push(email);
+    }
+  }
+
+  return {
+    success: failedEmails.length === 0,
+    sharedEmails,
+    failedEmails,
+  };
+}
+
+/**
+ * Helper to extract Google Spreadsheet ID from either raw ID or URL
+ */
+export function extractSpreadsheetId(input: string): string {
+  const trimmed = input.trim();
+  const match = trimmed.match(/\/d\/([a-zA-Z0-9-_]+)/);
+  if (match && match[1]) {
+    return match[1];
+  }
+  return trimmed;
+}
+
+/**
+ * Connect to an existing master Google Spreadsheet by URL or ID
+ */
+export async function connectCustomSpreadsheet(
+  urlOrId: string,
+  accessToken: string
+): Promise<SheetMetadata> {
+  const spreadsheetId = extractSpreadsheetId(urlOrId);
+  if (!spreadsheetId || spreadsheetId.length < 10) {
+    throw new Error('รูปแบบรหัสหรือลิงก์ Google Sheets ไม่ถูกต้อง');
+  }
+
+  // Fetch spreadsheet structure
+  const res = await fetchWithRetry(`${SHEETS_API_URL}/${spreadsheetId}?fields=spreadsheetId,properties.title,sheets.properties`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || 'ไม่สามารถเปิด Google Sheets ตามรหัสที่ระบุได้ โปรดตรวจสอบสิทธิ์การเข้าถึง');
+  }
+
+  const data = await res.json();
+  const sheetIds: Record<string, number> = {};
+  data.sheets?.forEach((s: any) => {
+    if (s.properties?.title) {
+      sheetIds[s.properties.title] = s.properties.sheetId;
+    }
+  });
+
+  // Ensure necessary tabs exist, if missing we create them or default to sheet 0
+  const requiredTabs = ['PorkPurchases', 'AdExpenses', 'OtherExpenses', 'Income'];
+  const missingTabs = requiredTabs.filter((tab) => sheetIds[tab] === undefined);
+
+  if (missingTabs.length > 0) {
+    // Add missing tabs
+    const addSheetRequests = missingTabs.map((title) => ({
+      addSheet: { properties: { title } },
+    }));
+
+    await fetch(`${SHEETS_API_URL}/${spreadsheetId}:batchUpdate`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ requests: addSheetRequests }),
+    }).catch((e) => console.warn('Could not add missing tabs:', e));
+
+    // Refetch sheet structure
+    const refetch = await fetch(`${SHEETS_API_URL}/${spreadsheetId}?fields=spreadsheetId,properties.title,sheets.properties`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (refetch.ok) {
+      const refetchData = await refetch.json();
+      refetchData.sheets?.forEach((s: any) => {
+        if (s.properties?.title) {
+          sheetIds[s.properties.title] = s.properties.sheetId;
+        }
+      });
+    }
+  }
+
+  // Ensure headers exist
+  const headerData = [
+    { range: 'PorkPurchases!A1:H1', values: [DEFAULT_HEADERS.PorkPurchases] },
+    { range: 'AdExpenses!A1:H1', values: [DEFAULT_HEADERS.AdExpenses] },
+    { range: 'OtherExpenses!A1:H1', values: [DEFAULT_HEADERS.OtherExpenses] },
+    { range: 'Income!A1:H1', values: [DEFAULT_HEADERS.Income] },
+  ];
+
+  await fetch(`${SHEETS_API_URL}/${spreadsheetId}/values:batchUpdate`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      valueInputOption: 'USER_ENTERED',
+      data: headerData,
+    }),
+  }).catch(() => {});
+
+  const meta: SheetMetadata = {
+    id: spreadsheetId,
+    name: data.properties?.title || SPREADSHEET_TITLE,
+    url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
+    sheetIds,
+    ownerEmail: PRIMARY_OWNER_EMAIL,
+  };
+
+  setCachedSpreadsheetMetadata(meta);
+  return meta;
+}
+
+/**
+ * Find or create the master pork store spreadsheet in Google Sheets.
+ * Strictly enforces that data is stored in lanceojoe@gmail.com's spreadsheet only.
+ */
+export async function getOrCreateSpreadsheet(
+  accessToken: string,
+  currentUserEmail?: string
+): Promise<SheetMetadata> {
+  const isOwner = isPrimaryOwner(currentUserEmail);
+
+  // 1. Check local cached metadata first
   const cachedMeta = getCachedSpreadsheetMetadata();
   if (cachedMeta && cachedMeta.id && cachedMeta.sheetIds && Object.keys(cachedMeta.sheetIds).length >= 4) {
+    // If owner is logged in, silently ensure sharing with team in background
+    if (isOwner) {
+      shareSpreadsheetWithTeam(cachedMeta.id, accessToken).catch(() => {});
+    }
     return cachedMeta;
   }
 
@@ -214,23 +383,27 @@ export async function getOrCreateSpreadsheet(accessToken: string): Promise<Sheet
           name: data.properties?.title || SPREADSHEET_TITLE,
           url: `https://docs.google.com/spreadsheets/d/${data.spreadsheetId}/edit`,
           sheetIds,
+          ownerEmail: PRIMARY_OWNER_EMAIL,
         };
         setCachedSpreadsheetMetadata(meta);
+        if (isOwner) {
+          shareSpreadsheetWithTeam(data.spreadsheetId, accessToken).catch(() => {});
+        }
         return meta;
       }
     } catch {
-      // If invalid or failed, remove invalid ID
+      // If invalid, clear cache
       localStorage.removeItem(SPREADSHEET_CACHE_KEY);
       localStorage.removeItem(SPREADSHEET_META_KEY);
     }
   }
 
-  // 2. Search existing file in Google Drive
+  // 2. Search existing file in Google Drive (searches for files owned by lanceojoe or shared with the user)
   try {
     const query = encodeURIComponent(
       `name = '${SPREADSHEET_TITLE}' and mimeType = 'application/vnd.google-apps.spreadsheet' and trashed = false`
     );
-    const driveRes = await fetchWithRetry(`${DRIVE_API_URL}/files?q=${query}&fields=files(id,name)`, {
+    const driveRes = await fetchWithRetry(`${DRIVE_API_URL}/files?q=${query}&fields=files(id,name,owners)`, {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
 
@@ -256,8 +429,12 @@ export async function getOrCreateSpreadsheet(accessToken: string): Promise<Sheet
             name: driveData.files[0].name,
             url: `https://docs.google.com/spreadsheets/d/${fileId}/edit`,
             sheetIds,
+            ownerEmail: PRIMARY_OWNER_EMAIL,
           };
           setCachedSpreadsheetMetadata(meta);
+          if (isOwner) {
+            shareSpreadsheetWithTeam(fileId, accessToken).catch(() => {});
+          }
           return meta;
         }
       }
@@ -266,7 +443,15 @@ export async function getOrCreateSpreadsheet(accessToken: string): Promise<Sheet
     console.warn('Error querying Drive for spreadsheet:', err);
   }
 
-  // 3. Create new spreadsheet with our 4 tabs
+  // 3. If file not found in Drive:
+  // ONLY lanceojoe@gmail.com can create the master spreadsheet!
+  if (!isOwner && currentUserEmail) {
+    throw new Error(
+      `ยังไม่พบ Google Sheets หลักของ ${PRIMARY_OWNER_EMAIL} ใน Google Drive ของคุณ ระบบกำหนดให้เก็บข้อมูลเข้าบัญชี ${PRIMARY_OWNER_EMAIL} เท่านั้น กรุณาให้ ${PRIMARY_OWNER_EMAIL} เข้าสู่ระบบเป็นคนแรกเพื่อสร้างและแชร์ชีต หรือนำลิงก์/รหัส Google Sheets ที่แชร์ไว้มากรอกเพื่อเชื่อมต่อ`
+    );
+  }
+
+  // Create new spreadsheet under lanceojoe@gmail.com
   const newSpreadsheetBody = {
     properties: {
       title: SPREADSHEET_TITLE,
@@ -323,11 +508,17 @@ export async function getOrCreateSpreadsheet(accessToken: string): Promise<Sheet
     }),
   }).catch((e) => console.warn('Could not set headers:', e));
 
+  // 5. Automatically share the newly created spreadsheet with the team members
+  await shareSpreadsheetWithTeam(spreadsheetId, accessToken).catch((e) =>
+    console.warn('Initial share failed:', e)
+  );
+
   const finalMeta: SheetMetadata = {
     id: spreadsheetId,
     name: SPREADSHEET_TITLE,
     url: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`,
     sheetIds,
+    ownerEmail: PRIMARY_OWNER_EMAIL,
   };
   setCachedSpreadsheetMetadata(finalMeta);
   return finalMeta;

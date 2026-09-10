@@ -428,7 +428,7 @@ export const ReportsView = ({
                   <FileSpreadsheet className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                   <div>
                     <div className="text-xs font-bold text-emerald-900">
-                      ข้อมูลทั้งหมดถูกบันทึกลง Google Sheets
+                      ข้อมูลทั้งหมดถูกบันทึกลง Google Sheets ของ lanceojoe@gmail.com
                     </div>
                     <div className="text-[11px] text-emerald-700">
                       ไฟล์: {sheetInfo.name} (แยก 4 แท็บชัดเจน)

@@ -37,41 +37,66 @@ export const LoginView = ({ onSignIn, isLoading, error }: LoginViewProps) => {
         </div>
 
         {/* Body content */}
-        <div className="p-6 sm:p-8 space-y-6">
-          <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-4 text-xs sm:text-sm text-amber-900 space-y-2">
+        <div className="p-6 sm:p-8 space-y-5">
+          <div className="bg-amber-50/90 border border-amber-200 rounded-xl p-4 text-xs text-amber-900 space-y-2">
             <div className="font-semibold flex items-center gap-1.5 text-amber-950">
               <ShieldCheck className="w-4 h-4 text-amber-600 flex-shrink-0" />
-              <span>ความปลอดภัยและการเข้าถึงข้อมูล</span>
+              <span>สิทธิ์การเข้าใช้งานระบบเฉพาะร้าน</span>
             </div>
             <p className="text-slate-600 leading-relaxed">
-              กรุณาเข้าสู่ระบบด้วย Google Account ของคุณเพื่อเปิดดูและจัดการข้อมูลบัญชี ข้อมูลจะถูกจัดเก็บใน <strong>Google Sheets</strong> และสลิปหลักฐานจะเก็บใน <strong>Google Drive</strong> ส่วนตัวของคุณอย่างปลอดภัย
+              ระบบนี้จำกัดการเข้าถึงเฉพาะบัญชี Google ของทีมงานที่ได้รับอนุญาต โดยข้อมูลทั้งหมดจะถูกบันทึกเข้า <strong>Google Sheets ของ lanceojoe@gmail.com เท่านั้น</strong>
             </p>
+            <div className="pt-1 border-t border-amber-200/60 space-y-1 font-mono text-[11px]">
+              <div className="text-amber-900 font-medium">อีเมลที่อนุญาตให้ใช้งาน:</div>
+              <ul className="space-y-0.5 text-slate-700 pl-1">
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                  <span className="font-semibold text-emerald-900">lanceojoe@gmail.com</span>
+                  <span className="text-[10px] text-emerald-700 font-sans">(เจ้าของ Google Sheets)</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                  <span>lanceokongkwan@gmail.com</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                  <span>a.butsachat@gmail.com</span>
+                </li>
+                <li className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                  <span>choochat052515@gmail.com</span>
+                </li>
+              </ul>
+            </div>
           </div>
 
           {/* Feature Highlights */}
-          <div className="grid grid-cols-2 gap-2.5 text-xs text-slate-700">
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+          <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-rose-500 font-semibold">🥩 สั่งซื้อหมู</span>
-              <span className="text-[11px] text-slate-500">ใส่แค่กิโล/ยอด</span>
+              <span className="text-[11px] text-slate-500">กิโล / ยอด</span>
             </div>
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-blue-500 font-semibold">📢 ยิงแอด</span>
-              <span className="text-[11px] text-slate-500">FB, TikTok, etc.</span>
+              <span className="text-[11px] text-slate-500">FB, TikTok</span>
             </div>
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-emerald-600 font-semibold">💰 รับเงินเข้า</span>
               <span className="text-[11px] text-slate-500">หน้าร้าน/โอน</span>
             </div>
-            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-slate-50 border border-slate-100">
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 border border-slate-100">
               <span className="text-purple-600 font-semibold">📊 ยอดคงเหลือ</span>
               <span className="text-[11px] text-slate-500">สรุปกำไรชัดเจน</span>
             </div>
           </div>
 
           {error && (
-            <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs sm:text-sm flex items-start gap-2">
-              <span className="font-bold">⚠️</span>
-              <span>{error}</span>
+            <div className="p-3.5 bg-red-50 border border-red-200 text-red-700 rounded-xl text-xs sm:text-sm flex items-start gap-2.5">
+              <span className="font-bold text-base leading-none">⛔</span>
+              <div className="space-y-1">
+                <div className="font-semibold">ไม่สามารถเข้าสู่ระบบได้</div>
+                <div className="text-slate-600 text-[11px] leading-relaxed">{error}</div>
+              </div>
             </div>
           )}
 
