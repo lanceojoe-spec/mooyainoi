@@ -1,45 +1,49 @@
-export interface StorageStatus {
+export interface CloudStorageStatus {
   status: string;
-  activeProvider: 'vercel-blob' | 'supabase' | 'none';
-  vercelBlobConfigured: boolean;
+  activeProvider: 'supabase' | 'vercel-blob' | 'local-fallback' | 'none';
   supabaseConfigured: boolean;
-  supabaseBucket?: string;
+  bucket?: string;
+  hasUrl?: boolean;
+  hasKey?: boolean;
   message: string;
 }
+
+// Backward-compatible alias
+export type VercelBlobStorageStatus = CloudStorageStatus;
 
 export interface UploadResult {
   success: boolean;
   url: string;
-  provider: 'vercel-blob' | 'supabase' | 'local-fallback';
+  provider: 'supabase' | 'vercel-blob' | 'local-fallback';
   isFallback?: boolean;
   pathname?: string;
   message?: string;
+  warning?: string;
   error?: string;
 }
 
 /**
- * Check the active cloud storage provider configured via .env on the server
+ * Check if Cloud Storage (Supabase) is configured via environment variables
  */
-export async function checkStorageStatus(): Promise<StorageStatus> {
+export async function checkStorageStatus(): Promise<CloudStorageStatus> {
   try {
     const res = await fetch('/api/storage/status');
     if (res.ok) {
       return await res.json();
     }
   } catch (err) {
-    console.warn('Could not check storage status:', err);
+    console.warn('Could not check cloud storage status:', err);
   }
   return {
     status: 'unknown',
     activeProvider: 'none',
-    vercelBlobConfigured: false,
     supabaseConfigured: false,
-    message: 'ไม่สามารถติดต่อเซิร์ฟเวอร์ตรวจสอบพื้นที่จัดเก็บได้',
+    message: 'ไม่สามารถติดต่อเซิร์ฟเวอร์ตรวจสอบพื้นที่จัดเก็บ Supabase Storage ได้',
   };
 }
 
 /**
- * Upload an image file (e.g. payment slip) to Vercel Blob or Supabase Storage via backend API
+ * Upload an image file (e.g. payment slip) to Supabase Storage via backend API
  */
 export async function uploadSlipImage(
   file: File,
@@ -53,7 +57,7 @@ export async function uploadSlipImage(
     reader.readAsDataURL(file);
   });
 
-  // 2. Post to /api/storage/upload
+  // 2. Post to /api/storage/upload (handled by server with @supabase/supabase-js)
   try {
     const res = await fetch('/api/storage/upload', {
       method: 'POST',
@@ -76,14 +80,15 @@ export async function uploadSlipImage(
     const data: UploadResult = await res.json();
     return data;
   } catch (err: any) {
-    console.warn('Cloud upload failed, using fallback data URL:', err);
-    // Fallback: If network or server fails, return base64 Data URL so user is never blocked
+    console.warn('Upload to Supabase Storage failed, using fallback data URL:', err);
+    // Fallback: If network or credentials not ready, return base64 Data URL so user is never blocked
     return {
       success: true,
       url: base64Data,
       provider: 'local-fallback',
       isFallback: true,
-      message: 'การอัปโหลดขึ้นคลาวด์ขัดข้อง ระบบได้บันทึกรูปภาพจากอุปกรณ์ให้โดยอัตโนมัติ',
+      message: 'การอัปโหลดขึ้น Supabase ขัดข้อง ระบบได้บันทึกรูปภาพจากอุปกรณ์ให้โดยอัตโนมัติ',
     };
   }
 }
+

@@ -274,7 +274,7 @@ export const AdExpensesView = ({
                 onChange={setSlipUrl}
                 category="ads"
                 idPrefix="ad-form"
-                label="รูปภาพใบเสร็จ/สลิปค่ายิงแอด (Vercel Blob / Supabase)"
+                label="รูปภาพใบเสร็จ/สลิปค่ายิงแอด (Supabase Storage)"
               />
 
               <div className="space-y-1">

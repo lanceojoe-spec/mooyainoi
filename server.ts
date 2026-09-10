@@ -1,63 +1,116 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { put } from '@vercel/blob';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Lazy-loaded Supabase client
-let supabaseClient: ReturnType<typeof createClient> | null = null;
-
-function getSupabaseClient() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
-  if (!url || !key) return null;
-
-  if (!supabaseClient) {
-    supabaseClient = createClient(url, key, {
-      auth: { persistSession: false },
-    });
-  }
-  return supabaseClient;
+interface SupabaseStorageStatus {
+  isConfigured: boolean;
+  url?: string;
+  hasKey: boolean;
+  bucket: string;
+  hint: string;
 }
 
-function detectActiveStorageProvider(): {
-  provider: 'vercel-blob' | 'supabase' | 'none';
-  vercelBlobAvailable: boolean;
-  supabaseAvailable: boolean;
-  bucketName: string;
-} {
-  const vercelToken = process.env.BLOB_READ_WRITE_TOKEN;
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY;
-  const preferred = (process.env.STORAGE_PROVIDER || 'auto').toLowerCase();
-  const bucketName = process.env.SUPABASE_BUCKET || 'slips';
+let cachedSupabaseClient: SupabaseClient | null = null;
+let lastClientUrl = '';
+let lastClientKey = '';
 
-  const vercelBlobAvailable = Boolean(vercelToken && vercelToken.trim().length > 0);
-  const supabaseAvailable = Boolean(supabaseUrl && supabaseKey);
+function getSupabaseStatus(): SupabaseStorageStatus {
+  const url = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '')?.trim();
+  const key = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    ''
+  )?.trim();
+  const bucket = (process.env.SUPABASE_BUCKET || 'slips')?.trim();
 
-  if (preferred === 'vercel-blob' && vercelBlobAvailable) {
-    return { provider: 'vercel-blob', vercelBlobAvailable, supabaseAvailable, bucketName };
-  }
-  if (preferred === 'supabase' && supabaseAvailable) {
-    return { provider: 'supabase', vercelBlobAvailable, supabaseAvailable, bucketName };
-  }
-
-  // Auto-detection
-  if (vercelBlobAvailable) {
-    return { provider: 'vercel-blob', vercelBlobAvailable, supabaseAvailable, bucketName };
-  }
-  if (supabaseAvailable) {
-    return { provider: 'supabase', vercelBlobAvailable, supabaseAvailable, bucketName };
+  if (!url && !key) {
+    return {
+      isConfigured: false,
+      url: undefined,
+      hasKey: false,
+      bucket,
+      hint: 'ยังไม่ได้ระบุ SUPABASE_URL และ SUPABASE_ANON_KEY ใน Settings (.env) กำลังใช้โหมดสำรองรูปภาพในเครื่อง',
+    };
   }
 
-  return { provider: 'none', vercelBlobAvailable, supabaseAvailable, bucketName };
+  if (!url) {
+    return {
+      isConfigured: false,
+      url: undefined,
+      hasKey: true,
+      bucket,
+      hint: 'ยังไม่ได้ระบุ SUPABASE_URL ใน Settings (.env)',
+    };
+  }
+
+  if (!key) {
+    return {
+      isConfigured: false,
+      url,
+      hasKey: false,
+      bucket,
+      hint: 'ยังไม่ได้ระบุ SUPABASE_ANON_KEY (หรือ SUPABASE_SERVICE_ROLE_KEY) ใน Settings (.env)',
+    };
+  }
+
+  if (!url.startsWith('http://') && !url.startsWith('https://')) {
+    return {
+      isConfigured: false,
+      url,
+      hasKey: true,
+      bucket,
+      hint: 'SUPABASE_URL รูปแบบไม่ถูกต้อง (ต้องขึ้นต้นด้วย https:// เช่น https://your-project.supabase.co)',
+    };
+  }
+
+  return {
+    isConfigured: true,
+    url,
+    hasKey: true,
+    bucket,
+    hint: `เชื่อมต่อ Supabase Storage สำเร็จ (ถังเก็บ: ${bucket})`,
+  };
+}
+
+function getSupabaseClient(): SupabaseClient | null {
+  const status = getSupabaseStatus();
+  if (!status.isConfigured || !status.url) {
+    return null;
+  }
+
+  const key = (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.SUPABASE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    ''
+  )?.trim();
+
+  if (cachedSupabaseClient && lastClientUrl === status.url && lastClientKey === key) {
+    return cachedSupabaseClient;
+  }
+
+  try {
+    cachedSupabaseClient = createClient(status.url, key, {
+      auth: { persistSession: false },
+    });
+    lastClientUrl = status.url;
+    lastClientKey = key;
+    return cachedSupabaseClient;
+  } catch (err) {
+    console.error('Failed to initialize Supabase client:', err);
+    return null;
+  }
 }
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // JSON payload parser with large limit for image base64 upload
+  // JSON payload parser with large limit for image base64 upload (up to 30MB)
   app.use(express.json({ limit: '30mb' }));
   app.use(express.urlencoded({ extended: true, limit: '30mb' }));
 
@@ -68,25 +121,21 @@ async function startServer() {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // Storage status endpoint
+  // Supabase storage status endpoint
   app.get('/api/storage/status', (req: Request, res: Response) => {
-    const status = detectActiveStorageProvider();
+    const supabaseStatus = getSupabaseStatus();
     res.json({
       status: 'ok',
-      activeProvider: status.provider,
-      vercelBlobConfigured: status.vercelBlobAvailable,
-      supabaseConfigured: status.supabaseAvailable,
-      supabaseBucket: status.bucketName,
-      message:
-        status.provider === 'vercel-blob'
-          ? 'เชื่อมต่อ Vercel Blob Storage สำเร็จ (พร้อมอัปโหลด)'
-          : status.provider === 'supabase'
-          ? `เชื่อมต่อ Supabase Storage สำเร็จ (Bucket: ${status.bucketName})`
-          : 'ยังไม่ได้ระบุ BLOB_READ_WRITE_TOKEN หรือ SUPABASE_URL ใน .env (ใช้โหมดสำรอง Data URL)',
+      activeProvider: supabaseStatus.isConfigured ? 'supabase' : 'local-fallback',
+      supabaseConfigured: supabaseStatus.isConfigured,
+      bucket: supabaseStatus.bucket,
+      hasUrl: Boolean(supabaseStatus.url),
+      hasKey: supabaseStatus.hasKey,
+      message: supabaseStatus.hint,
     });
   });
 
-  // Slip upload endpoint
+  // Slip upload endpoint (Supabase Storage)
   app.post('/api/storage/upload', async (req: Request, res: Response): Promise<void> => {
     try {
       const { filename, contentType = 'image/jpeg', base64Data, category = 'pork' } = req.body;
@@ -118,76 +167,91 @@ async function startServer() {
       const safeFilename = (filename || 'slip.jpg')
         .replace(/[^a-zA-Z0-9_.-]/g, '_')
         .toLowerCase();
-      const cloudPath = `slips/${category}/${timestamp}_${safeFilename}`;
+      const cloudPath = `${category}/${timestamp}_${safeFilename}`;
 
-      const { provider, bucketName } = detectActiveStorageProvider();
+      const supabaseStatus = getSupabaseStatus();
+      const supabase = getSupabaseClient();
 
-      // Case 1: Vercel Blob Storage
-      if (provider === 'vercel-blob') {
-        const token = process.env.BLOB_READ_WRITE_TOKEN;
-        const blobResult = await put(cloudPath, buffer, {
-          access: 'public',
-          token,
-          contentType: detectedContentType,
-        });
+      // If Supabase is configured, upload directly to Supabase Storage
+      if (supabaseStatus.isConfigured && supabase) {
+        try {
+          const bucket = supabaseStatus.bucket;
 
-        res.json({
-          success: true,
-          url: blobResult.url,
-          provider: 'vercel-blob',
-          pathname: blobResult.pathname,
-          uploadedAt: new Date().toISOString(),
-        });
-        return;
-      }
+          // Attempt upload to Supabase bucket
+          let uploadRes = await supabase.storage
+            .from(bucket)
+            .upload(cloudPath, buffer, {
+              contentType: detectedContentType,
+              upsert: true,
+            });
 
-      // Case 2: Supabase Storage
-      if (provider === 'supabase') {
-        const supabase = getSupabaseClient();
-        if (!supabase) {
-          throw new Error('Supabase client failed to initialize');
-        }
+          // If bucket doesn't exist, try creating it automatically
+          if (uploadRes.error && uploadRes.error.message?.toLowerCase().includes('bucket not found')) {
+            try {
+              await supabase.storage.createBucket(bucket, { public: true });
+              uploadRes = await supabase.storage
+                .from(bucket)
+                .upload(cloudPath, buffer, {
+                  contentType: detectedContentType,
+                  upsert: true,
+                });
+            } catch (createErr) {
+              console.warn('Could not auto-create bucket:', createErr);
+            }
+          }
 
-        const { error: uploadError } = await supabase.storage
-          .from(bucketName)
-          .upload(cloudPath, buffer, {
-            contentType: detectedContentType,
-            upsert: true,
+          if (uploadRes.error) {
+            throw uploadRes.error;
+          }
+
+          // Get public URL from Supabase
+          const { data: publicUrlData } = supabase.storage
+            .from(bucket)
+            .getPublicUrl(cloudPath);
+
+          const publicUrl = publicUrlData?.publicUrl || '';
+
+          res.json({
+            success: true,
+            url: publicUrl,
+            provider: 'supabase',
+            pathname: cloudPath,
+            uploadedAt: new Date().toISOString(),
           });
+          return;
+        } catch (supabaseErr: any) {
+          console.warn('Supabase Storage upload failed:', supabaseErr?.message);
+          const errorMsg = supabaseErr?.message || 'ไม่สามารถอัปโหลดไปยัง Supabase ได้';
 
-        if (uploadError) {
-          throw uploadError;
+          // Return graceful fallback with informative warning
+          res.json({
+            success: true,
+            url: base64Data,
+            provider: 'local-fallback',
+            isFallback: true,
+            warning: `Supabase Storage แจ้งเตือน: ${errorMsg} (ระบบได้สำรองรูปภาพในเครื่องไว้ชั่วคราวแล้ว)`,
+            message: `Supabase Storage แจ้งเตือน: ${errorMsg} (ระบบได้สำรองรูปภาพในเครื่องไว้ชั่วคราวแล้ว)`,
+            uploadedAt: new Date().toISOString(),
+          });
+          return;
         }
-
-        const { data: publicUrlData } = supabase.storage
-          .from(bucketName)
-          .getPublicUrl(cloudPath);
-
-        res.json({
-          success: true,
-          url: publicUrlData.publicUrl,
-          provider: 'supabase',
-          pathname: cloudPath,
-          uploadedAt: new Date().toISOString(),
-        });
-        return;
       }
 
-      // Case 3: Fallback when neither Vercel Blob nor Supabase is configured yet in .env
-      // Return the data URL safely so user can test and save slips without friction
+      // If Supabase is not yet configured, use local fallback
       res.json({
         success: true,
         url: base64Data,
         provider: 'local-fallback',
         isFallback: true,
-        message: 'ยังไม่ได้ตั้งค่า Vercel Blob หรือ Supabase ใน .env ระบบจึงใช้ภาพจากอุปกรณ์เป็นหลักฐานชั่วคราว',
+        warning: supabaseStatus.hint,
+        message: supabaseStatus.hint,
         uploadedAt: new Date().toISOString(),
       });
     } catch (err: any) {
-      console.error('Storage upload error:', err);
+      console.error('Server upload error:', err);
       res.status(500).json({
         success: false,
-        error: err?.message || 'Failed to upload slip to storage',
+        error: err?.message || 'Failed to process slip upload',
       });
     }
   });

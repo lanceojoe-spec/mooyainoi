@@ -275,7 +275,7 @@ export const PorkPurchasesView = ({
                 onChange={setSlipUrl}
                 category="pork"
                 idPrefix="pork-form"
-                label="รูปภาพสลิปหลักฐานการซื้อหมู (Vercel Blob / Supabase)"
+                label="รูปภาพสลิปหลักฐานการซื้อหมู (Supabase Storage)"
               />
 
               <div className="space-y-1">

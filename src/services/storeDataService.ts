@@ -103,7 +103,7 @@ export function exportPorkPurchasesCsv(purchases: PorkPurchase[]): void {
     p.userEmail || '',
   ]);
   const dateStr = new Date().toISOString().slice(0, 10);
-  downloadCsvFile(`ร้านหมูยายหน่อย_รายจ่ายสั่งซื้อหมู_${dateStr}`, headers, rows);
+  downloadCsvFile(`ร้านหมูยายน้อย_รายจ่ายสั่งซื้อหมู_${dateStr}`, headers, rows);
 }
 
 export function exportAdExpensesCsv(expenses: AdExpense[]): void {
@@ -128,7 +128,7 @@ export function exportAdExpensesCsv(expenses: AdExpense[]): void {
     a.userEmail || '',
   ]);
   const dateStr = new Date().toISOString().slice(0, 10);
-  downloadCsvFile(`ร้านหมูยายหน่อย_รายจ่ายค่ายิงแอด_${dateStr}`, headers, rows);
+  downloadCsvFile(`ร้านหมูยายน้อย_รายจ่ายค่ายิงแอด_${dateStr}`, headers, rows);
 }
 
 export function exportOtherExpensesCsv(expenses: OtherExpense[]): void {
@@ -153,7 +153,7 @@ export function exportOtherExpensesCsv(expenses: OtherExpense[]): void {
     o.userEmail || '',
   ]);
   const dateStr = new Date().toISOString().slice(0, 10);
-  downloadCsvFile(`ร้านหมูยายหน่อย_รายจ่ายอื่นๆ_${dateStr}`, headers, rows);
+  downloadCsvFile(`ร้านหมูยายน้อย_รายจ่ายอื่นๆ_${dateStr}`, headers, rows);
 }
 
 export function exportIncomeCsv(records: IncomeRecord[]): void {
@@ -178,7 +178,7 @@ export function exportIncomeCsv(records: IncomeRecord[]): void {
     i.userEmail || '',
   ]);
   const dateStr = new Date().toISOString().slice(0, 10);
-  downloadCsvFile(`ร้านหมูยายหน่อย_รายรับเงินเข้า_${dateStr}`, headers, rows);
+  downloadCsvFile(`ร้านหมูยายน้อย_รายรับเงินเข้า_${dateStr}`, headers, rows);
 }
 
 export function exportAllSummaryCsv(data: StoreAllData): void {
@@ -201,5 +201,5 @@ export function exportAllSummaryCsv(data: StoreAllData): void {
   ];
 
   const dateStr = new Date().toISOString().slice(0, 10);
-  downloadCsvFile(`ร้านหมูยายหน่อย_สรุปภาพรวมรายรับรายจ่าย_${dateStr}`, headers, rows);
+  downloadCsvFile(`ร้านหมูยายน้อย_สรุปภาพรวมรายรับรายจ่าย_${dateStr}`, headers, rows);
 }

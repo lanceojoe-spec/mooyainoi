@@ -25,7 +25,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="font-bold text-slate-900 text-base sm:text-lg leading-tight">
-                  ร้านหมูยายหน่อย
+                  ร้าน หมูยายน้อย
                 </h1>
                 <span className="hidden sm:inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-800 border border-rose-200 gap-1">
                   <Store className="w-3 h-3 text-rose-600" />
@@ -33,7 +33,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </div>
               <p className="text-[12px] text-slate-500 leading-none mt-0.5">
-                ระบบจัดการสั่งซื้อ รายจ่าย & รายรับร้านหมู
+                ระบบจัดการสั่งซื้อ รายจ่าย & รายรับร้าน หมูยายน้อย
               </p>
             </div>
           </div>
@@ -60,11 +60,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                 🐷
               </div>
 
-              <div className="hidden lg:block text-left">
-                <div className="text-xs font-semibold text-slate-800 truncate max-w-[130px]">
-                  {user.displayName}
+              <div className="hidden sm:block text-left">
+                <div className="text-xs font-semibold text-slate-800 truncate max-w-[140px]">
+                  {user.displayName || 'ร้าน หมูยายน้อย'}
                 </div>
-                <div className="text-[10px] text-slate-500 truncate max-w-[130px] font-mono">
+                <div className="text-[10px] text-slate-500 truncate max-w-[140px] font-mono">
                   @{user.username}
                 </div>
               </div>

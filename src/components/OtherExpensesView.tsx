@@ -276,7 +276,7 @@ export const OtherExpensesView = ({
                 onChange={setSlipUrl}
                 category="other"
                 idPrefix="other-form"
-                label="รูปภาพสลิป/ใบเสร็จรายจ่าย (Vercel Blob / Supabase)"
+                label="รูปภาพสลิป/ใบเสร็จรายจ่าย (Supabase Storage)"
               />
 
               <div className="space-y-1">

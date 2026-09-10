@@ -60,10 +60,10 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLogin, error: propError 
             <span className="text-3xl">🐷</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight mb-1">
-            ร้านหมูยายหน่อย
+            ร้าน หมูยายน้อย
           </h1>
           <p className="text-rose-100 text-xs sm:text-sm font-normal">
-            ระบบจัดการการสั่งซื้อ รายจ่าย & รายรับร้านหมู
+            ระบบจัดการการสั่งซื้อ รายจ่าย & รายรับร้าน หมูยายน้อย
           </p>
         </div>
 

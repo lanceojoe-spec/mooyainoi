@@ -36,6 +36,10 @@ export function getSavedSession(): StoreAuthUser | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (parsed && parsed.username) {
+      if (parsed.displayName !== 'ร้าน หมูยายน้อย') {
+        parsed.displayName = 'ร้าน หมูยายน้อย';
+        saveSession(parsed);
+      }
       return parsed;
     }
   } catch {

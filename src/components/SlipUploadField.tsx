@@ -12,7 +12,7 @@ import {
 import {
   uploadSlipImage,
   checkStorageStatus,
-  StorageStatus,
+  CloudStorageStatus,
 } from '../services/storageUploadService';
 import { getDriveDirectImageUrl } from '../services/googleDriveService';
 
@@ -29,12 +29,12 @@ export const SlipUploadField = ({
   onChange,
   category,
   idPrefix,
-  label = 'แนบรูปภาพสลิปหลักฐาน',
+  label = 'แนบรูปภาพสลิปหลักฐาน (Supabase Storage)',
 }: SlipUploadFieldProps) => {
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadSuccessNote, setUploadSuccessNote] = useState<string | null>(null);
-  const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
+  const [storageStatus, setStorageStatus] = useState<CloudStorageStatus | null>(null);
   const [mode, setMode] = useState<'upload' | 'url'>('upload');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -49,8 +49,8 @@ export const SlipUploadField = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 15 * 1024 * 1024) {
-      setError('ขนาดรูปภาพต้องไม่เกิน 15 MB');
+    if (file.size > 20 * 1024 * 1024) {
+      setError('ขนาดรูปภาพต้องไม่เกิน 20 MB');
       return;
     }
 
@@ -62,18 +62,18 @@ export const SlipUploadField = ({
       const result = await uploadSlipImage(file, category);
       if (result.success && result.url) {
         onChange(result.url);
-        if (result.provider === 'vercel-blob') {
-          setUploadSuccessNote('อัปโหลดขึ้น Vercel Blob Storage เรียบร้อยแล้ว');
-        } else if (result.provider === 'supabase') {
-          setUploadSuccessNote('อัปโหลดขึ้น Supabase Storage เรียบร้อยแล้ว');
+        if (result.provider === 'supabase') {
+          setUploadSuccessNote('อัปโหลดขึ้น Supabase Storage สำเร็จเรียบร้อยแล้ว');
+        } else if (result.warning) {
+          setUploadSuccessNote(`แนบรูปภาพสำเร็จ (สำรองในเครื่อง): ${result.warning}`);
         } else {
-          setUploadSuccessNote('แนบรูปภาพสำเร็จ (โหมดสำรอง)');
+          setUploadSuccessNote('แนบรูปภาพสำเร็จ (โหมดสำรองรูปภาพในเครื่อง)');
         }
       } else {
         throw new Error(result.error || 'อัปโหลดไม่สำเร็จ');
       }
     } catch (err: any) {
-      setError(err?.message || 'เกิดข้อผิดพลาดในการอัปโหลดไฟล์');
+      setError(err?.message || 'เกิดข้อผิดพลาดในการอัปโหลดไฟล์ไปยัง Supabase Storage');
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -92,31 +92,27 @@ export const SlipUploadField = ({
     <div className="space-y-2 bg-slate-50/80 p-3 rounded-xl border border-slate-200">
       <div className="flex items-center justify-between">
         <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
-          <Cloud className="w-3.5 h-3.5 text-rose-600" />
+          <Cloud className="w-3.5 h-3.5 text-emerald-600" />
           <span>{label}</span>
         </label>
 
-        {/* Cloud Provider Indicator */}
+        {/* Storage Provider Indicator */}
         <div className="flex items-center gap-1.5 text-[11px]">
-          {storageStatus?.activeProvider === 'vercel-blob' && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Vercel Blob
-            </span>
-          )}
-          {storageStatus?.activeProvider === 'supabase' && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
+          {storageStatus?.supabaseConfigured ? (
+            <span
+              title={`เชื่อมต่อ Supabase Storage สำเร็จ (ถังเก็บ: ${storageStatus.bucket || 'slips'})`}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium"
+            >
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               Supabase Storage
             </span>
-          )}
-          {storageStatus && storageStatus.activeProvider === 'none' && (
+          ) : (
             <span
-              title="ตั้งค่า BLOB_READ_WRITE_TOKEN หรือ SUPABASE_URL ใน .env เพื่อเปิดใช้คลาวด์สตอเรจ"
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-medium cursor-help"
+              title="ระบุ SUPABASE_URL และ SUPABASE_ANON_KEY ใน Settings (.env) เพื่อจัดเก็บบน Supabase อัตโนมัติ"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-medium cursor-help"
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-              พร้อมต่อ .env
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+              โหมดสำรองในเครื่อง
             </span>
           )}
 
@@ -163,20 +159,20 @@ export const SlipUploadField = ({
               id={`${idPrefix}-upload-btn`}
               disabled={isUploading}
               onClick={() => fileInputRef.current?.click()}
-              className="w-full py-3 px-3 rounded-xl border-2 border-dashed border-slate-300 hover:border-rose-400 bg-white hover:bg-rose-50/30 text-slate-600 text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60"
+              className="w-full py-3 px-3 rounded-xl border-2 border-dashed border-slate-300 hover:border-emerald-400 bg-white hover:bg-emerald-50/30 text-slate-600 text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-60"
             >
               {isUploading ? (
-                <div className="flex items-center gap-2 text-rose-600 py-1">
-                  <div className="w-4 h-4 border-2 border-rose-600 border-t-transparent rounded-full animate-spin" />
-                  <span className="font-semibold">กำลังอัปโหลดสลิปขึ้น Cloud Storage...</span>
+                <div className="flex items-center gap-2 text-emerald-600 py-1">
+                  <div className="w-4 h-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                  <span className="font-semibold">กำลังอัปโหลดสลิปขึ้น Supabase Storage...</span>
                 </div>
               ) : (
                 <>
-                  <div className="w-7 h-7 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
+                  <div className="w-7 h-7 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
                     <Upload className="w-4 h-4" />
                   </div>
-                  <span>คลิกเพื่อเลือกรูปภาพสลิปจากอุปกรณ์ (รองรับ Vercel Blob / Supabase)</span>
-                  <span className="text-[10px] text-slate-400">JPG, PNG, WEBP ขนาดไม่เกิน 15MB</span>
+                  <span>คลิกเพื่อเลือกรูปภาพสลิปจากอุปกรณ์ (อัปโหลดขึ้น Supabase)</span>
+                  <span className="text-[10px] text-slate-400">รองรับไฟล์ JPG, PNG, WEBP ขนาดไม่เกิน 20MB</span>
                 </>
               )}
             </button>
@@ -244,7 +240,7 @@ export const SlipUploadField = ({
             <input
               id={`${idPrefix}-url-input`}
               type="url"
-              placeholder="https://... หรือลิงก์ Google Drive"
+              placeholder="https://... หรือลิงก์สลิป"
               value={value}
               onChange={(e) => onChange(e.target.value)}
               className="w-full pl-8 pr-8 py-2 text-xs border border-slate-300 rounded-lg bg-white focus:outline-hidden focus:ring-2 focus:ring-rose-500"

@@ -73,14 +73,14 @@ export default function App() {
 
     const sessionUser: StoreAuthUser = {
       username: APP_CREDENTIALS.username,
-      displayName: 'ร้านหมูยายหน่อย',
+      displayName: 'ร้าน หมูยายน้อย',
       role: 'ผู้ดูแลระบบร้าน',
       loggedInAt: Date.now(),
     };
 
     saveSession(sessionUser);
     setAppUser(sessionUser);
-    showToast('เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ ร้านหมูยายหน่อย');
+    showToast('เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ ร้าน หมูยายน้อย');
     return true;
   };
 
@@ -335,12 +335,14 @@ export default function App() {
       </main>
 
       {/* Slip Modal for Viewing & Editing Slips */}
-      <SlipModal
-        target={slipModalTarget}
-        onClose={() => setSlipModalTarget(null)}
-        onSaveSlip={handleSaveSlip}
-        onDeleteRecord={handleDeleteRecord}
-      />
+      {slipModalTarget && (
+        <SlipModal
+          target={slipModalTarget}
+          onClose={() => setSlipModalTarget(null)}
+          onSaveSlip={handleSaveSlip}
+          onDeleteRecord={handleDeleteRecord}
+        />
+      )}
 
       {/* Toast Notification */}
       {toast && (

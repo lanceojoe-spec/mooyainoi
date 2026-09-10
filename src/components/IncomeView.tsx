@@ -275,7 +275,7 @@ export const IncomeView = ({
                 onChange={setSlipUrl}
                 category="income"
                 idPrefix="income-form"
-                label="รูปภาพสลิปโอนเงินเข้า (Vercel Blob / Supabase)"
+                label="รูปภาพสลิปโอนเงินเข้า (Supabase Storage)"
               />
 
               <div className="space-y-1">

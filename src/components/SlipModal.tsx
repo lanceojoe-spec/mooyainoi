@@ -16,7 +16,7 @@ import { formatCurrency } from '../utils/formatters';
 import {
   uploadSlipImage,
   checkStorageStatus,
-  StorageStatus,
+  CloudStorageStatus,
 } from '../services/storageUploadService';
 
 interface SlipModalProps {
@@ -32,26 +32,35 @@ export const SlipModal = ({
   onSaveSlip,
   onDeleteRecord,
 }: SlipModalProps) => {
-  if (!target) return null;
-
-  const [inputUrl, setInputUrl] = useState(target.currentSlipUrl || '');
+  const [inputUrl, setInputUrl] = useState(target?.currentSlipUrl || '');
   const [isUploading, setIsUploading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [storageStatus, setStorageStatus] = useState<StorageStatus | null>(null);
+  const [storageStatus, setStorageStatus] = useState<CloudStorageStatus | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const directImageUrl = getDriveDirectImageUrl(inputUrl || target.currentSlipUrl);
+  useEffect(() => {
+    if (target) {
+      setInputUrl(target.currentSlipUrl || '');
+      setError(null);
+      setSuccessMsg(null);
+      setConfirmDelete(false);
+    }
+  }, [target]);
 
   useEffect(() => {
     checkStorageStatus().then((status) => {
       setStorageStatus(status);
     });
   }, []);
+
+  if (!target) return null;
+
+  const directImageUrl = getDriveDirectImageUrl(inputUrl || target.currentSlipUrl);
 
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,13 +80,13 @@ export const SlipModal = ({
       const result = await uploadSlipImage(file, target.type);
       if (result.success && result.url) {
         setInputUrl(result.url);
-        const providerName =
-          result.provider === 'vercel-blob'
-            ? 'Vercel Blob Storage'
-            : result.provider === 'supabase'
-            ? 'Supabase Storage'
-            : 'รูปภาพในระบบ';
-        setSuccessMsg(`อัปโหลดรูปภาพสลิปไปยัง ${providerName} สำเร็จแล้ว กด "บันทึกการแก้ไขสลิป" เพื่อเสร็จสิ้น`);
+        if (result.provider === 'supabase') {
+          setSuccessMsg('อัปโหลดรูปภาพสลิปไปยัง Supabase Storage สำเร็จแล้ว กด "บันทึกการแก้ไขสลิป" เพื่อเสร็จสิ้น');
+        } else if (result.warning) {
+          setSuccessMsg(`แนบรูปภาพสำเร็จ (สำรองในเครื่อง): ${result.warning} กด "บันทึกการแก้ไขสลิป" เพื่อเสร็จสิ้น`);
+        } else {
+          setSuccessMsg('แนบรูปภาพสลิปสำเร็จ (สำรองในเครื่อง) กด "บันทึกการแก้ไขสลิป" เพื่อเสร็จสิ้น');
+        }
       } else {
         throw new Error(result.error || 'อัปโหลดสลิปไม่สำเร็จ');
       }
@@ -143,14 +152,13 @@ export const SlipModal = ({
                 <h2 className="text-base font-bold text-slate-800 leading-tight">
                   หลักฐานและสลิปการจ่ายเงิน
                 </h2>
-                {storageStatus?.activeProvider === 'vercel-blob' && (
+                {storageStatus?.supabaseConfigured ? (
                   <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Vercel Blob
+                    Supabase Storage เชื่อมต่อแล้ว
                   </span>
-                )}
-                {storageStatus?.activeProvider === 'supabase' && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                    Supabase
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                    สำรองรูปในเครื่อง
                   </span>
                 )}
               </div>
@@ -227,17 +235,15 @@ export const SlipModal = ({
           </div>
 
           {/* Upload file from device */}
-          <div className="bg-rose-50/50 border border-rose-100 rounded-xl p-3.5 space-y-2.5">
+          <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-3.5 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                <Upload className="w-3.5 h-3.5 text-rose-600" />
+                <Upload className="w-3.5 h-3.5 text-emerald-600" />
                 อัปโหลดรูปภาพสลิปหลักฐาน
               </span>
               <span className="text-[11px] text-slate-500">
-                {storageStatus?.activeProvider === 'vercel-blob'
-                  ? '☁️ Vercel Blob'
-                  : storageStatus?.activeProvider === 'supabase'
-                  ? '☁️ Supabase Storage'
+                {storageStatus?.supabaseConfigured
+                  ? '⚡ Supabase Storage'
                   : 'โหมดสำรอง'}
               </span>
             </div>
@@ -255,17 +261,17 @@ export const SlipModal = ({
               id="upload-slip-file-btn"
               disabled={isUploading || isSaving}
               onClick={() => fileInputRef.current?.click()}
-              className="w-full py-2.5 px-3 rounded-lg border border-rose-200 bg-white hover:bg-rose-50 text-rose-700 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60 shadow-2xs"
+              className="w-full py-2.5 px-3 rounded-lg border border-emerald-200 bg-white hover:bg-emerald-50 text-emerald-700 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-60 shadow-2xs"
             >
               {isUploading ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-rose-600 border-t-transparent rounded-full animate-spin" />
-                  <span>กำลังอัปโหลดสลิปขึ้น Cloud Storage...</span>
+                  <div className="w-4 h-4 border-2 border-emerald-600 border-t-transparent rounded-full animate-spin" />
+                  <span>กำลังอัปโหลดสลิปขึ้น Supabase Storage...</span>
                 </>
               ) : (
                 <>
-                  <Upload className="w-4 h-4 text-rose-600" />
-                  <span>เลือกรูปภาพสลิปใหม่ (รองรับ Vercel Blob / Supabase)</span>
+                  <Upload className="w-4 h-4 text-emerald-600" />
+                  <span>เลือกรูปภาพสลิปใหม่ (อัปโหลดขึ้น Supabase)</span>
                 </>
               )}
             </button>
