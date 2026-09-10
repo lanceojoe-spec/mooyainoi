@@ -1,0 +1,6 @@
+{
+  "name": "ระบบจัดการร้านขายหมู",
+  "description": "ระบบบันทึกรายจ่ายสั่งซื้อหมู ค่ายิงแอด รายจ่ายอื่นๆ และรายรับ พร้อมรายงานสรุปและบันทึกลง Google Sheets",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
