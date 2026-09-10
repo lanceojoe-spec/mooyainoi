@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { User } from 'firebase/auth';
 import {
   initAuth,
   googleSignIn,
   logout,
   setAccessToken,
+  getStoredGoogleToken,
 } from './services/firebaseAuth';
 import {
   getOrCreateSpreadsheet,
@@ -28,7 +28,15 @@ import {
   SlipEditTarget,
   GoogleSheetInfo,
 } from './types';
-import { isAuthorizedEmail, AUTHORIZED_EMAILS, PRIMARY_OWNER_EMAIL } from './utils/authWhitelist';
+import {
+  verifyCredentials,
+  getSavedSession,
+  saveSession,
+  clearSession,
+  StoreAuthUser,
+  APP_CREDENTIALS,
+  PRIMARY_OWNER_EMAIL,
+} from './utils/authWhitelist';
 import { Navbar } from './components/Navbar';
 import { NavigationTabs } from './components/NavigationTabs';
 import { LoginView } from './components/LoginView';
@@ -42,11 +50,9 @@ import { SheetSettingsModal } from './components/SheetSettingsModal';
 import { CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 
 export default function App() {
-  // Auth state
-  const [user, setUser] = useState<User | null>(null);
-  const [accessToken, setToken] = useState<string | null>(null);
-  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
-  const [authError, setAuthError] = useState<string | null>(null);
+  // Primary Store Authentication state (Username & Password)
+  const [appUser, setAppUser] = useState<StoreAuthUser | null>(() => getSavedSession());
+  const [accessToken, setToken] = useState<string | null>(() => getStoredGoogleToken());
 
   // App data state (preloaded from cache if available for instant display)
   const initialCache = getCachedSheetsData();
@@ -73,11 +79,6 @@ export default function App() {
 
   // Refs to eliminate infinite re-render loops and race conditions
   const isFetchingRef = useRef(false);
-  const userRef = useRef<User | null>(user);
-  useEffect(() => {
-    userRef.current = user;
-  }, [user]);
-
   const sheetMetadataRef = useRef<SheetMetadata | null>(sheetMetadata);
   useEffect(() => {
     sheetMetadataRef.current = sheetMetadata;
@@ -100,7 +101,7 @@ export default function App() {
     }
   }, [porkPurchases, adExpenses, otherExpenses, incomeRecords]);
 
-  // Unified sync data with Google Sheets
+  // Unified sync data with Google Sheets of lanceojoe@gmail.com
   const syncData = useCallback(async (token: string, force = false, overrideEmail?: string) => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
@@ -108,7 +109,7 @@ export default function App() {
       setIsDataLoading(true);
       let meta = sheetMetadataRef.current;
       if (!meta || !meta.id) {
-        const email = overrideEmail || userRef.current?.email || undefined;
+        const email = overrideEmail || PRIMARY_OWNER_EMAIL;
         meta = await getOrCreateSpreadsheet(token, email);
         setSheetMetadata(meta);
         sheetMetadataRef.current = meta;
@@ -121,7 +122,6 @@ export default function App() {
       setIncomeRecords(allData.incomeRecords);
     } catch (err: any) {
       console.error('Error loading data from Google Sheets:', err);
-      // Show descriptive message without clearing existing cached records
       showToast(err?.message || 'ไม่สามารถโหลดข้อมูลจาก Google Sheets ได้', 'error');
     } finally {
       setIsDataLoading(false);
@@ -130,92 +130,106 @@ export default function App() {
     }
   }, []);
 
-  // Auth state initialization on mount only - runs once to avoid infinite loops
+  // Background Google Auth sync initialization on mount
   useEffect(() => {
-    const unsubscribe = initAuth(
-      async (authedUser, token) => {
-        if (!isAuthorizedEmail(authedUser.email)) {
-          await logout();
-          setUser(null);
-          setToken(null);
-          setAccessToken(null);
-          setAuthError(`อีเมล "${authedUser.email}" ไม่ได้รับอนุญาตให้เข้าใช้งานระบบ อนุญาตเฉพาะ: ${AUTHORIZED_EMAILS.join(', ')}`);
-          setIsAuthLoading(false);
-          return;
-        }
+    const savedToken = getStoredGoogleToken();
+    if (savedToken) {
+      setToken(savedToken);
+      syncData(savedToken, false, PRIMARY_OWNER_EMAIL);
+    }
 
-        setUser(authedUser);
+    const unsubscribe = initAuth(
+      async (_authedUser, token) => {
         setToken(token);
         setAccessToken(token);
-        setIsAuthLoading(false);
-        syncData(token, false, authedUser.email || undefined);
+        syncData(token, false, PRIMARY_OWNER_EMAIL);
       },
       () => {
-        setUser(null);
-        setToken(null);
-        setAccessToken(null);
-        setIsAuthLoading(false);
+        // Offline or token expired; user can connect anytime via Navbar
       }
     );
 
     return () => unsubscribe();
   }, [syncData]);
 
-  // Handle Sign In with Google
-  const handleSignIn = async () => {
-    setAuthError(null);
-    try {
-      const res = await googleSignIn();
-      if (res) {
-        if (!isAuthorizedEmail(res.user.email)) {
-          await logout();
-          setUser(null);
-          setToken(null);
-          setAccessToken(null);
-          setAuthError(`อีเมล "${res.user.email}" ไม่ได้รับอนุญาตให้เข้าใช้งานระบบ อนุญาตเฉพาะ: ${AUTHORIZED_EMAILS.join(', ')}`);
-          return;
-        }
-
-        setUser(res.user);
-        setToken(res.accessToken);
-        setAccessToken(res.accessToken);
-        showToast(`ยินดีต้อนรับ ${res.user.displayName || res.user.email}`);
-        await syncData(res.accessToken, false, res.user.email || undefined);
-      }
-    } catch (err: any) {
-      console.error('Login error:', err);
-      setAuthError(err?.message || 'การเข้าสู่ระบบไม่สำเร็จ โปรดลองใหม่อีกครั้ง');
+  // Handle Login with Username & Password
+  const handleLogin = async (username: string, password: string): Promise<boolean> => {
+    const isValid = verifyCredentials(username, password);
+    if (!isValid) {
+      return false;
     }
+
+    const sessionUser: StoreAuthUser = {
+      username: APP_CREDENTIALS.username,
+      displayName: 'ร้านหมูยายหน่อย',
+      role: 'ผู้ดูแลระบบร้าน',
+      loggedInAt: Date.now(),
+    };
+
+    saveSession(sessionUser);
+    setAppUser(sessionUser);
+    showToast('เข้าสู่ระบบสำเร็จ ยินดีต้อนรับ ร้านหมูยายหน่อย');
+
+    // If Google token already cached, trigger data sync
+    const savedToken = getStoredGoogleToken();
+    if (savedToken) {
+      setToken(savedToken);
+      syncData(savedToken, false, PRIMARY_OWNER_EMAIL);
+    }
+    return true;
   };
 
-  // Handle Sign Out
+  // Handle Logout
   const handleLogout = async () => {
+    clearSession();
+    setAppUser(null);
     try {
       await logout();
-      setUser(null);
-      setToken(null);
-      setAccessToken(null);
-      showToast('ออกจากระบบเรียบร้อยแล้ว');
+    } catch {
+      // ignore
+    }
+    showToast('ออกจากระบบเรียบร้อยแล้ว');
+  };
+
+  // Handle Connect with Google Sheets (lanceojoe@gmail.com)
+  const handleConnectGoogleSheets = async () => {
+    try {
+      setIsDataLoading(true);
+      const res = await googleSignIn();
+      if (res?.accessToken) {
+        setToken(res.accessToken);
+        setAccessToken(res.accessToken);
+        showToast('เชื่อมต่อ Google Sheets (lanceojoe@gmail.com) สำเร็จ');
+        await syncData(res.accessToken, true, PRIMARY_OWNER_EMAIL);
+      }
     } catch (err: any) {
-      console.error('Logout error:', err);
+      console.error('Google Sheets connection error:', err);
+      showToast(err?.message || 'ไม่สามารถเชื่อมต่อ Google Sheets ได้', 'error');
+    } finally {
+      setIsDataLoading(false);
     }
   };
 
   // Manual refresh / sync with Google Sheets
   const handleRefresh = async () => {
-    if (!accessToken) return;
+    if (!accessToken) {
+      showToast('กรุณากดเชื่อมต่อ Google Sheets ก่อนทำการซิงค์', 'error');
+      return;
+    }
     setIsRefreshing(true);
-    await syncData(accessToken, true);
+    await syncData(accessToken, true, PRIMARY_OWNER_EMAIL);
     showToast('ซิงค์ข้อมูลล่าสุดจาก Google Sheets สำเร็จ');
   };
 
   // Connect custom spreadsheet URL or ID
   const handleConnectCustomSheet = async (urlOrId: string) => {
-    if (!accessToken) throw new Error('กรุณาเข้าสู่ระบบก่อน');
+    if (!accessToken) {
+      throw new Error('กรุณากดเชื่อมต่อ Google Sheets ก่อนเปลี่ยนการตั้งค่า');
+    }
     const newMeta = await connectCustomSpreadsheet(urlOrId, accessToken);
     setSheetMetadata(newMeta);
     sheetMetadataRef.current = newMeta;
-    await syncData(accessToken, true);
+    await syncData(accessToken, true, PRIMARY_OWNER_EMAIL);
     showToast('เชื่อมต่อ Google Sheets หลักสำเร็จเรียบร้อย');
   };
 
@@ -235,25 +249,30 @@ export default function App() {
     notes: string;
     slipUrl: string;
   }) => {
-    if (!accessToken || !sheetMetadata) throw new Error('กรุณาเข้าสู่ระบบก่อน');
-
     const id = `PORK-${Date.now().toString().slice(-6)}`;
     const pricePerKg = data.kilos > 0 ? Math.round((data.amount / data.kilos) * 100) / 100 : 0;
-    const userEmail = user?.email || '';
+    const userEmail = appUser?.username || 'mooyainoi';
 
-    // Append to Google Sheets: [ID, วันที่, กิโล, ยอดเงิน, เฉลี่ย, สลิป, หมายเหตุ, ผู้บันทึก]
-    const rowValues = [
-      id,
-      data.date,
-      data.kilos,
-      data.amount,
-      pricePerKg,
-      data.slipUrl,
-      data.notes,
-      userEmail,
-    ];
+    let rowIndex: number | undefined;
 
-    const rowIndex = await appendRowToSheet(sheetMetadata.id, 'PorkPurchases', rowValues, accessToken);
+    // Append to Google Sheets if connected
+    if (accessToken && sheetMetadata?.id) {
+      try {
+        const rowValues = [
+          id,
+          data.date,
+          data.kilos,
+          data.amount,
+          pricePerKg,
+          data.slipUrl,
+          data.notes,
+          userEmail,
+        ];
+        rowIndex = await appendRowToSheet(sheetMetadata.id, 'PorkPurchases', rowValues, accessToken);
+      } catch (err) {
+        console.warn('Could not append row to Google Sheets:', err);
+      }
+    }
 
     const newRecord: PorkPurchase = {
       id,
@@ -268,7 +287,11 @@ export default function App() {
     };
 
     setPorkPurchases((prev) => [newRecord, ...prev]);
-    showToast('บันทึกรายจ่ายสั่งซื้อหมูลง Google Sheets เรียบร้อย');
+    showToast(
+      accessToken && sheetMetadata?.id
+        ? 'บันทึกรายจ่ายสั่งซื้อหมูลง Google Sheets เรียบร้อย'
+        : 'บันทึกในระบบเรียบร้อย (เชื่อมต่อ Google Sheets เพื่อซิงค์ขึ้นคลาวด์)'
+    );
   };
 
   // 2. Add Ad Expense
@@ -280,23 +303,28 @@ export default function App() {
     notes: string;
     slipUrl: string;
   }) => {
-    if (!accessToken || !sheetMetadata) throw new Error('กรุณาเข้าสู่ระบบก่อน');
-
     const id = `AD-${Date.now().toString().slice(-6)}`;
-    const userEmail = user?.email || '';
+    const userEmail = appUser?.username || 'mooyainoi';
 
-    const rowValues = [
-      id,
-      data.date,
-      data.platform,
-      data.amount,
-      data.campaignName,
-      data.slipUrl,
-      data.notes,
-      userEmail,
-    ];
+    let rowIndex: number | undefined;
 
-    const rowIndex = await appendRowToSheet(sheetMetadata.id, 'AdExpenses', rowValues, accessToken);
+    if (accessToken && sheetMetadata?.id) {
+      try {
+        const rowValues = [
+          id,
+          data.date,
+          data.platform,
+          data.amount,
+          data.campaignName,
+          data.slipUrl,
+          data.notes,
+          userEmail,
+        ];
+        rowIndex = await appendRowToSheet(sheetMetadata.id, 'AdExpenses', rowValues, accessToken);
+      } catch (err) {
+        console.warn('Could not append row to Google Sheets:', err);
+      }
+    }
 
     const newRecord: AdExpense = {
       id,
@@ -311,7 +339,11 @@ export default function App() {
     };
 
     setAdExpenses((prev) => [newRecord, ...prev]);
-    showToast('บันทึกค่ายิงแอดลง Google Sheets เรียบร้อย');
+    showToast(
+      accessToken && sheetMetadata?.id
+        ? 'บันทึกค่ายิงแอดลง Google Sheets เรียบร้อย'
+        : 'บันทึกในระบบเรียบร้อย (เชื่อมต่อ Google Sheets เพื่อซิงค์ขึ้นคลาวด์)'
+    );
   };
 
   // 3. Add Other Expense
@@ -323,23 +355,28 @@ export default function App() {
     notes: string;
     slipUrl: string;
   }) => {
-    if (!accessToken || !sheetMetadata) throw new Error('กรุณาเข้าสู่ระบบก่อน');
-
     const id = `EXP-${Date.now().toString().slice(-6)}`;
-    const userEmail = user?.email || '';
+    const userEmail = appUser?.username || 'mooyainoi';
 
-    const rowValues = [
-      id,
-      data.date,
-      data.category,
-      data.amount,
-      data.description,
-      data.slipUrl,
-      data.notes,
-      userEmail,
-    ];
+    let rowIndex: number | undefined;
 
-    const rowIndex = await appendRowToSheet(sheetMetadata.id, 'OtherExpenses', rowValues, accessToken);
+    if (accessToken && sheetMetadata?.id) {
+      try {
+        const rowValues = [
+          id,
+          data.date,
+          data.category,
+          data.amount,
+          data.description,
+          data.slipUrl,
+          data.notes,
+          userEmail,
+        ];
+        rowIndex = await appendRowToSheet(sheetMetadata.id, 'OtherExpenses', rowValues, accessToken);
+      } catch (err) {
+        console.warn('Could not append row to Google Sheets:', err);
+      }
+    }
 
     const newRecord: OtherExpense = {
       id,
@@ -354,7 +391,11 @@ export default function App() {
     };
 
     setOtherExpenses((prev) => [newRecord, ...prev]);
-    showToast('บันทึกรายจ่ายอื่นๆ ลง Google Sheets เรียบร้อย');
+    showToast(
+      accessToken && sheetMetadata?.id
+        ? 'บันทึกรายจ่ายอื่นๆ ลง Google Sheets เรียบร้อย'
+        : 'บันทึกในระบบเรียบร้อย (เชื่อมต่อ Google Sheets เพื่อซิงค์ขึ้นคลาวด์)'
+    );
   };
 
   // 4. Add Income
@@ -366,23 +407,28 @@ export default function App() {
     notes: string;
     slipUrl: string;
   }) => {
-    if (!accessToken || !sheetMetadata) throw new Error('กรุณาเข้าสู่ระบบก่อน');
-
     const id = `INC-${Date.now().toString().slice(-6)}`;
-    const userEmail = user?.email || '';
+    const userEmail = appUser?.username || 'mooyainoi';
 
-    const rowValues = [
-      id,
-      data.date,
-      data.channel,
-      data.amount,
-      data.description,
-      data.slipUrl,
-      data.notes,
-      userEmail,
-    ];
+    let rowIndex: number | undefined;
 
-    const rowIndex = await appendRowToSheet(sheetMetadata.id, 'Income', rowValues, accessToken);
+    if (accessToken && sheetMetadata?.id) {
+      try {
+        const rowValues = [
+          id,
+          data.date,
+          data.channel,
+          data.amount,
+          data.description,
+          data.slipUrl,
+          data.notes,
+          userEmail,
+        ];
+        rowIndex = await appendRowToSheet(sheetMetadata.id, 'Income', rowValues, accessToken);
+      } catch (err) {
+        console.warn('Could not append row to Google Sheets:', err);
+      }
+    }
 
     const newRecord: IncomeRecord = {
       id,
@@ -397,7 +443,11 @@ export default function App() {
     };
 
     setIncomeRecords((prev) => [newRecord, ...prev]);
-    showToast('บันทึกยอดเงินเข้าร้านลง Google Sheets เรียบร้อย');
+    showToast(
+      accessToken && sheetMetadata?.id
+        ? 'บันทึกยอดเงินเข้าร้านลง Google Sheets เรียบร้อย'
+        : 'บันทึกในระบบเรียบร้อย (เชื่อมต่อ Google Sheets เพื่อซิงค์ขึ้นคลาวด์)'
+    );
   };
 
   // 5. Update Google Drive Slip URL
@@ -407,8 +457,6 @@ export default function App() {
     newSlipUrl: string,
     rowIndex?: number
   ) => {
-    if (!accessToken || !sheetMetadata) throw new Error('กรุณาเข้าสู่ระบบ');
-
     const sheetNameMap: Record<SlipEditTarget['type'], string> = {
       pork: 'PorkPurchases',
       ads: 'AdExpenses',
@@ -418,8 +466,8 @@ export default function App() {
 
     const sheetName = sheetNameMap[type];
 
-    // If rowIndex exists, update in Google Sheets column F
-    if (rowIndex && rowIndex > 1) {
+    // If Google Sheets is connected and rowIndex exists, update in Google Sheets column F
+    if (accessToken && sheetMetadata && rowIndex && rowIndex > 1) {
       await updateRowSlipUrl(sheetMetadata.id, sheetName, rowIndex, newSlipUrl, accessToken);
     }
 
@@ -442,7 +490,7 @@ export default function App() {
       );
     }
 
-    showToast('อัปเดตสลิปหลักฐาน Google Drive สำเร็จ');
+    showToast('อัปเดตสลิปหลักฐานสำเร็จ');
   };
 
   // 6. Delete Record
@@ -451,8 +499,6 @@ export default function App() {
     id: string,
     rowIndex?: number
   ) => {
-    if (!accessToken || !sheetMetadata) throw new Error('กรุณาเข้าสู่ระบบ');
-
     const sheetNameMap: Record<SlipEditTarget['type'], string> = {
       pork: 'PorkPurchases',
       ads: 'AdExpenses',
@@ -461,12 +507,14 @@ export default function App() {
     };
 
     const sheetName = sheetNameMap[type];
-    const sheetId = sheetMetadata.sheetIds[sheetName];
 
-    if (sheetId !== undefined && rowIndex && rowIndex > 1) {
-      await deleteRowFromSheet(sheetMetadata.id, sheetId, rowIndex, accessToken).catch((err) =>
-        console.warn('Google Sheet row delete warning:', err)
-      );
+    if (accessToken && sheetMetadata) {
+      const sheetId = sheetMetadata.sheetIds[sheetName];
+      if (sheetId !== undefined && rowIndex && rowIndex > 1) {
+        await deleteRowFromSheet(sheetMetadata.id, sheetId, rowIndex, accessToken).catch((err) =>
+          console.warn('Google Sheet row delete warning:', err)
+        );
+      }
     }
 
     // Update local state
@@ -483,19 +531,9 @@ export default function App() {
     showToast('ลบรายการเรียบร้อยแล้ว');
   };
 
-  // If initial auth check is loading
-  if (isAuthLoading) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 text-slate-600">
-        <Loader2 className="w-8 h-8 animate-spin text-rose-600 mb-3" />
-        <p className="text-sm font-medium">กำลังเตรียมระบบร้านขายหมู...</p>
-      </div>
-    );
-  }
-
-  // If user is not authenticated, show strict Login View
-  if (!user || !accessToken) {
-    return <LoginView onSignIn={handleSignIn} isLoading={isDataLoading} error={authError} />;
+  // If user is not authenticated with username & password, show Login View
+  if (!appUser) {
+    return <LoginView onLogin={handleLogin} />;
   }
 
   const sheetInfo: GoogleSheetInfo | null = sheetMetadata
@@ -506,12 +544,16 @@ export default function App() {
       }
     : null;
 
+  const isSheetsConnected = Boolean(accessToken && sheetMetadata?.id);
+
   return (
     <div className="min-h-screen bg-slate-50/80 flex flex-col pb-20 sm:pb-8">
       {/* Top Application Header */}
       <Navbar
-        user={user}
+        user={appUser}
         sheetInfo={sheetInfo}
+        isSheetsConnected={isSheetsConnected}
+        onConnectGoogleSheets={handleConnectGoogleSheets}
         onRefresh={handleRefresh}
         isRefreshing={isRefreshing}
         onLogout={handleLogout}
@@ -531,6 +573,28 @@ export default function App() {
             income: incomeRecords.length,
           }}
         />
+
+        {/* Sync notification banner if not connected to Google Sheets */}
+        {!isSheetsConnected && (
+          <div className="mb-4 p-3.5 bg-amber-50 border border-amber-200 text-amber-900 rounded-xl text-xs flex items-center justify-between gap-3 shadow-2xs">
+            <div className="flex items-center gap-2">
+              <span className="text-base">📋</span>
+              <div>
+                <span className="font-semibold">ยังไม่ได้เชื่อมต่อ Google Sheets:</span>{' '}
+                <span className="text-slate-600">
+                  ระบบจัดเก็บข้อมูลลงเครื่องชั่วคราว คลิกปุ่มเพื่อซิงค์ข้อมูลกับบัญชี {PRIMARY_OWNER_EMAIL}
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleConnectGoogleSheets}
+              className="shrink-0 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-medium rounded-lg text-xs transition-colors cursor-pointer"
+            >
+              เชื่อมต่อ Google Sheets
+            </button>
+          </div>
+        )}
 
         {/* Loading Indicator for Data fetch */}
         {isDataLoading && (
@@ -608,7 +672,7 @@ export default function App() {
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         metadata={sheetMetadata}
-        currentUserEmail={user.email || ''}
+        currentUserEmail={PRIMARY_OWNER_EMAIL}
         onConnectCustomSheet={handleConnectCustomSheet}
         onShareWithTeam={handleShareWithTeam}
       />

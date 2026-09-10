@@ -16,7 +16,7 @@ import { formatCurrency } from '../utils/formatters';
 
 interface SlipModalProps {
   target: SlipEditTarget | null;
-  accessToken: string;
+  accessToken: string | null;
   onClose: () => void;
   onSaveSlip: (type: SlipEditTarget['type'], id: string, newSlipUrl: string, rowIndex?: number) => Promise<void>;
   onDeleteRecord?: (type: SlipEditTarget['type'], id: string, rowIndex?: number) => Promise<void>;
@@ -48,6 +48,11 @@ export const SlipModal = ({
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!accessToken) {
+      setError('กรุณาเชื่อมต่อ Google Sheets ที่แถบด้านบนก่อนอัปโหลดไฟล์สลิป');
+      return;
+    }
 
     // Check size limit: 15MB
     if (file.size > 15 * 1024 * 1024) {

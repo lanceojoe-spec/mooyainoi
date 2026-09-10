@@ -1,3 +1,74 @@
+/**
+ * Credentials for system login (Username & Password)
+ */
+export const APP_CREDENTIALS = {
+  username: 'mooyainoi',
+  password: 'Amazing*mooyainoi',
+} as const;
+
+export const PRIMARY_OWNER_EMAIL = 'lanceojoe@gmail.com';
+
+export interface StoreAuthUser {
+  username: string;
+  displayName: string;
+  role: string;
+  loggedInAt: number;
+}
+
+const SESSION_STORAGE_KEY = 'pork_store_session_user';
+
+/**
+ * Verify user input against required system credentials
+ */
+export function verifyCredentials(username: string, password: string): boolean {
+  if (!username || !password) return false;
+  const isUsernameMatch = username.trim().toLowerCase() === APP_CREDENTIALS.username.toLowerCase();
+  const isPasswordMatch = password.trim() === APP_CREDENTIALS.password;
+  return isUsernameMatch && isPasswordMatch;
+}
+
+/**
+ * Get active saved session from localStorage
+ */
+export function getSavedSession(): StoreAuthUser | null {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.username) {
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Save active session to localStorage
+ */
+export function saveSession(user: StoreAuthUser): void {
+  try {
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Clear active session from localStorage
+ */
+export function clearSession(): void {
+  try {
+    localStorage.removeItem(SESSION_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Historical email list for Google Drive/Sheets authorization references
+ */
 export const AUTHORIZED_EMAILS = [
   'lanceojoe@gmail.com',
   'lanceokongkwan@gmail.com',
@@ -5,33 +76,14 @@ export const AUTHORIZED_EMAILS = [
   'choochat052515@gmail.com',
 ] as const;
 
-export const PRIMARY_OWNER_EMAIL = 'lanceojoe@gmail.com';
-
-/**
- * Checks if the given email is in the allowed system users list
- */
 export function isAuthorizedEmail(email: string | null | undefined): boolean {
   if (!email) return false;
   const normalized = email.trim().toLowerCase();
   return (AUTHORIZED_EMAILS as readonly string[]).includes(normalized);
 }
 
-/**
- * Checks if the given email is the primary spreadsheet owner
- */
 export function isPrimaryOwner(email: string | null | undefined): boolean {
   if (!email) return false;
   return email.trim().toLowerCase() === PRIMARY_OWNER_EMAIL.toLowerCase();
 }
 
-/**
- * Returns formatted role name for display
- */
-export function getEmailRoleDescription(email: string | null | undefined): string {
-  if (!email) return 'ผู้ใช้งานทั่วไป';
-  const normalized = email.trim().toLowerCase();
-  if (normalized === PRIMARY_OWNER_EMAIL.toLowerCase()) {
-    return 'เจ้าของร้าน / ผู้ถือครอง Google Sheets';
-  }
-  return 'ทีมงานร้านหมู';
-}
